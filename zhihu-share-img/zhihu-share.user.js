@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出包含作者头像、标题、正文、编辑时间及高清二维码的分享卡片（支持防重点击与 Loading）
 // @author       You
 // @match        https://www.zhihu.com/*
@@ -10,6 +10,7 @@
 // @updateURL    https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js
 // @downloadURL  https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
+// @require      https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js
 // @grant        GM_addStyle
 // @run-at       document-idle
 // ==/UserScript==
@@ -135,6 +136,11 @@
             justify-content: center;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
+        .share-card-qrcode-box img {
+            width: 76px;
+            height: 76px;
+            display: block;
+        }
         .share-card-qrcode-label {
             font-size: 11px;
             color: #999999;
@@ -235,7 +241,39 @@
         return '';
     }
 
-    // 6. 从当前浮层提取原生二维码
+    // 6. 从当前浮层提取原生二维码（跳过尚未绘制的空白 canvas）
+    function canvasHasInk(canvas) {
+        if (!canvas || canvas.width < 8 || canvas.height < 8) return false;
+        try {
+            const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+            for (let i = 0; i < data.length; i += 16) {
+                if (data[i + 3] > 16 && (data[i] < 248 || data[i + 1] < 248 || data[i + 2] < 248)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function collectQrSrcFrom(root) {
+        if (!root || !root.querySelectorAll) return null;
+        for (const canvas of root.querySelectorAll('canvas')) {
+            if (!canvasHasInk(canvas)) continue;
+            try { return canvas.toDataURL('image/png'); } catch (e) {}
+        }
+        for (const img of root.querySelectorAll('img')) {
+            const src = img.currentSrc || img.src || img.getAttribute('data-actualsrc') || '';
+            if (!src) continue;
+            const cls = `${img.className} ${img.parentElement ? img.parentElement.className : ''}`.toLowerCase();
+            if (src.startsWith('data:image') || /qr/i.test(src) || /qrcode/.test(cls)) {
+                return src;
+            }
+        }
+        return null;
+    }
+
     function getShareQrCodeSrc(clickedElement) {
         let container = clickedElement;
         let foundQrContainer = false;
@@ -249,21 +287,48 @@
         }
 
         if (foundQrContainer) {
-            const canvas = container.querySelector('canvas');
-            if (canvas) {
-                try { return canvas.toDataURL('image/png'); } catch (e) {}
-            }
-
-            const imgs = container.querySelectorAll('img');
-            for (const img of imgs) {
-                if (img.src && (img.src.startsWith('data:image') || img.src.includes('qr'))) {
-                    return img.src;
-                }
-            }
+            const src = collectQrSrcFrom(container);
+            if (src) return src;
         }
 
-        const fallbackImg = document.querySelector('.ShareMenu-qrcode img, .ShareMenu-qrCode img, [class*="qrcode"] img');
-        return fallbackImg ? fallbackImg.src : null;
+        const labeled = document.querySelector('.ShareMenu-qrcode, .ShareMenu-qrCode, [class*="qrcode"], [class*="QrCode"]');
+        return collectQrSrcFrom(labeled);
+    }
+
+    function getSharePageUrl() {
+        const canonical = document.querySelector('link[rel="canonical"]');
+        if (canonical && canonical.href) return canonical.href;
+        const og = document.querySelector('meta[property="og:url"]');
+        if (og && og.content) return og.content;
+        return location.href.split('#')[0];
+    }
+
+    function generateQrDataUrl(text) {
+        if (typeof qrcode !== 'function' || !text) return null;
+        try {
+            const qr = qrcode(0, 'M');
+            qr.addData(text);
+            qr.make();
+            return qr.createDataURL(4, 2);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function resolveQrImage(clickedElement) {
+        let src = getShareQrCodeSrc(clickedElement);
+        if (!src) {
+            const deadline = Date.now() + 1500;
+            while (!src && Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 100));
+                src = getShareQrCodeSrc(clickedElement);
+            }
+        }
+        if (src) {
+            const asData = await imageToBase64(src);
+            if (asData && asData.startsWith('data:image')) return asData;
+        }
+        return generateQrDataUrl(getSharePageUrl());
     }
 
     // 7. 生成并导出长图（带状态锁定）
@@ -281,7 +346,7 @@
         }
     }
 
-    async function generateCardImage(itemElement, rowElement, statusTarget, qrCodeSrc) {
+    async function generateCardImage(itemElement, rowElement, statusTarget) {
         if (isGenerating) return;
 
         let originalText = '';
@@ -290,6 +355,8 @@
             originalText = readStatusText(statusTarget);
             writeStatusText(statusTarget, '正在生成...');
             rowElement.classList.add('share-card-btn-loading');
+
+            const qrCodeSrc = await resolveQrImage(rowElement);
 
             if (!itemElement) {
                 alert('未能捕获到对应回答卡片，请将鼠标移至该回答后重试');
@@ -384,14 +451,10 @@
                 qrWrap.className = 'share-card-qrcode-wrap';
                 const qrBox = document.createElement('div');
                 qrBox.className = 'share-card-qrcode-box';
-                const qrCanvas = document.createElement('canvas');
-                qrCanvas.id = 'share-card-qr-canvas';
-                qrCanvas.width = 152;
-                qrCanvas.height = 152;
-                qrCanvas.style.width = '76px';
-                qrCanvas.style.height = '76px';
-                qrCanvas.style.display = 'block';
-                qrBox.appendChild(qrCanvas);
+                const qrImg = document.createElement('img');
+                qrImg.alt = '二维码';
+                qrImg.src = qrCodeSrc;
+                qrBox.appendChild(qrImg);
                 qrWrap.appendChild(qrBox);
                 const qrLabel = document.createElement('span');
                 qrLabel.className = 'share-card-qrcode-label';
@@ -401,24 +464,9 @@
             }
             card.appendChild(footer);
 
-            // 在独立 canvas 绘制二维码
-            if (qrCodeSrc) {
-                const qrCanvas = card.querySelector('#share-card-qr-canvas');
-                if (qrCanvas) {
-                    await new Promise((resolve) => {
-                        const img = new Image();
-                        img.crossOrigin = 'anonymous';
-                        img.onload = () => {
-                            const ctx = qrCanvas.getContext('2d');
-                            ctx.fillStyle = '#ffffff';
-                            ctx.fillRect(0, 0, qrCanvas.width, qrCanvas.height);
-                            ctx.drawImage(img, 0, 0, qrCanvas.width, qrCanvas.height);
-                            resolve();
-                        };
-                        img.onerror = resolve;
-                        img.src = qrCodeSrc;
-                    });
-                }
+            const qrPreview = card.querySelector('.share-card-qrcode-box img');
+            if (qrPreview && !qrPreview.complete) {
+                await new Promise(res => { qrPreview.onload = res; qrPreview.onerror = res; });
             }
 
             // 提升懒加载地址后再等待正文内图片加载
@@ -538,9 +586,8 @@
                 // 若当前正在处理上一张图片，直接拦截点击
                 if (isGenerating) return;
 
-                const qrCodeSrc = getShareQrCodeSrc(newRow);
                 const itemElement = currentActiveCard || (isZhuanlanPage() ? getZhuanlanArticleEl() : null);
-                generateCardImage(itemElement, newRow, clonedTextNode || newRow, qrCodeSrc);
+                generateCardImage(itemElement, newRow, clonedTextNode || newRow);
             });
 
             listContainer.insertBefore(newRow, row);
