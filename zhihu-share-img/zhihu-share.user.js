@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出包含作者头像、标题、正文、编辑时间及高清二维码的分享卡片（支持防重点击与 Loading）
 // @author       You
 // @match        https://www.zhihu.com/*
+// @noframes
 // @updateURL    https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js
 // @downloadURL  https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
@@ -164,7 +165,6 @@
     function getAnswerTitle(itemElement) {
         if (itemElement) {
             const cardTitleEl = itemElement.querySelector('.ContentItem-title') ||
-                                itemElement.querySelector('h2.ContentItem-title') ||
                                 itemElement.querySelector('.QuestionItem-title');
             if (cardTitleEl && cardTitleEl.innerText.trim()) {
                 return cardTitleEl.innerText.trim();
@@ -180,7 +180,6 @@
         }
 
         const questionHeaderEl = document.querySelector('.QuestionHeader-title') ||
-                                 document.querySelector('h1.QuestionHeader-title') ||
                                  document.querySelector('h1.Post-Title') ||
                                  document.querySelector('h1');
         if (questionHeaderEl && questionHeaderEl.innerText.trim()) {
@@ -209,7 +208,6 @@
     function getAnswerTime(itemElement) {
         if (!itemElement) return '';
         const timeEl = itemElement.querySelector('.ContentItem-time') ||
-                       itemElement.querySelector('.ContentItem-time span') ||
                        itemElement.querySelector('a[data-tooltip*="发布于"]') ||
                        itemElement.querySelector('a[data-tooltip*="编辑于"]');
 
@@ -219,7 +217,7 @@
 
         const walker = document.createTreeWalker(itemElement, NodeFilter.SHOW_TEXT, null, false);
         let node;
-        while (node = walker.nextNode()) {
+        while ((node = walker.nextNode()) !== null) {
             const txt = node.textContent.trim();
             if (/^(发布于|编辑于)/.test(txt)) return txt;
         }
@@ -229,24 +227,27 @@
     // 6. 从当前浮层提取原生二维码
     function getShareQrCodeSrc(clickedElement) {
         let container = clickedElement;
+        let foundQrContainer = false;
         for (let i = 0; i < 8; i++) {
             if (!container || !container.parentElement) break;
             container = container.parentElement;
             if (container.innerText && (container.innerText.includes('扫码分享') || container.innerText.includes('微信扫码'))) {
+                foundQrContainer = true;
                 break;
             }
         }
-        if (!container) container = document.body;
 
-        const canvas = container.querySelector('canvas');
-        if (canvas) {
-            try { return canvas.toDataURL('image/png'); } catch (e) {}
-        }
+        if (foundQrContainer) {
+            const canvas = container.querySelector('canvas');
+            if (canvas) {
+                try { return canvas.toDataURL('image/png'); } catch (e) {}
+            }
 
-        const imgs = container.querySelectorAll('img');
-        for (const img of imgs) {
-            if (img.src && (img.src.startsWith('data:image') || img.src.includes('qr') || img.width >= 50 || img.naturalWidth >= 50)) {
-                return img.src;
+            const imgs = container.querySelectorAll('img');
+            for (const img of imgs) {
+                if (img.src && (img.src.startsWith('data:image') || img.src.includes('qr'))) {
+                    return img.src;
+                }
             }
         }
 
@@ -255,25 +256,43 @@
     }
 
     // 7. 生成并导出长图（带状态锁定）
+    function readStatusText(target) {
+        if (!target) return '';
+        return target.nodeType === Node.TEXT_NODE ? target.nodeValue : target.innerText;
+    }
+
+    function writeStatusText(target, text) {
+        if (!target) return;
+        if (target.nodeType === Node.TEXT_NODE) {
+            target.nodeValue = text;
+        } else {
+            target.innerText = text;
+        }
+    }
+
     async function generateCardImage(itemElement, rowElement, statusTarget, qrCodeSrc) {
         if (isGenerating) return;
-        isGenerating = true;
 
-        const originalText = statusTarget.innerText;
-        statusTarget.innerText = '正在生成...';
-        rowElement.classList.add('share-card-btn-loading');
-
+        let originalText = '';
         try {
+            isGenerating = true;
+            originalText = readStatusText(statusTarget);
+            writeStatusText(statusTarget, '正在生成...');
+            rowElement.classList.add('share-card-btn-loading');
+
             if (!itemElement) {
                 alert('未能捕获到对应回答卡片，请将鼠标移至该回答后重试');
                 return;
             }
 
-            // 折叠状态自动展开
+            // 折叠状态自动展开，轮询直到展开按钮消失
             const expandBtn = itemElement.querySelector('.ContentItem-expandButton');
             if (expandBtn) {
                 expandBtn.click();
-                await new Promise(res => setTimeout(res, 300));
+                const deadline = Date.now() + 2000;
+                while (itemElement.querySelector('.ContentItem-expandButton') && Date.now() < deadline) {
+                    await new Promise(res => setTimeout(res, 50));
+                }
             }
 
             const title = getAnswerTitle(itemElement);
@@ -298,31 +317,75 @@
                 card.id = 'zhihu-share-card-container';
                 document.body.appendChild(card);
             }
+            card.replaceChildren();
 
-            card.innerHTML = `
-                <div class="share-card-title">${title}</div>
-                <div class="share-card-author">
-                    ${authorAvatarBase64 ? `<img class="share-card-author-avatar" src="${authorAvatarBase64}" />` : ''}
-                    <span class="share-card-author-name">${author}</span>
-                </div>
-                <div class="share-card-body"></div>
-                ${timeText ? `<div class="share-card-time">${timeText}</div>` : ''}
-                <div class="share-card-footer">
-                    <div class="share-card-footer-left">
-                        <div class="share-card-footer-tip">长按或扫码阅读全文</div>
-                        <div class="share-card-footer-sub">知乎精选内容分享</div>
-                    </div>
-                    ${qrCodeSrc ? `
-                    <div class="share-card-qrcode-wrap">
-                        <div class="share-card-qrcode-box">
-                            <canvas id="share-card-qr-canvas" width="152" height="152" style="width: 76px; height: 76px; display: block;"></canvas>
-                        </div>
-                        <span class="share-card-qrcode-label">微信扫码</span>
-                    </div>
-                    ` : ''}
-                </div>
-            `;
-            card.querySelector('.share-card-body').appendChild(clonedContent);
+            const titleEl = document.createElement('div');
+            titleEl.className = 'share-card-title';
+            titleEl.textContent = title;
+            card.appendChild(titleEl);
+
+            const authorRow = document.createElement('div');
+            authorRow.className = 'share-card-author';
+            if (authorAvatarBase64) {
+                const avatar = document.createElement('img');
+                avatar.className = 'share-card-author-avatar';
+                avatar.src = authorAvatarBase64;
+                authorRow.appendChild(avatar);
+            }
+            const nameEl = document.createElement('span');
+            nameEl.className = 'share-card-author-name';
+            nameEl.textContent = author;
+            authorRow.appendChild(nameEl);
+            card.appendChild(authorRow);
+
+            const bodyEl = document.createElement('div');
+            bodyEl.className = 'share-card-body';
+            bodyEl.appendChild(clonedContent);
+            card.appendChild(bodyEl);
+
+            if (timeText) {
+                const timeEl = document.createElement('div');
+                timeEl.className = 'share-card-time';
+                timeEl.textContent = timeText;
+                card.appendChild(timeEl);
+            }
+
+            const footer = document.createElement('div');
+            footer.className = 'share-card-footer';
+
+            const footerLeft = document.createElement('div');
+            footerLeft.className = 'share-card-footer-left';
+            const tipEl = document.createElement('div');
+            tipEl.className = 'share-card-footer-tip';
+            tipEl.textContent = '长按或扫码阅读全文';
+            const subEl = document.createElement('div');
+            subEl.className = 'share-card-footer-sub';
+            subEl.textContent = '知乎精选内容分享';
+            footerLeft.appendChild(tipEl);
+            footerLeft.appendChild(subEl);
+            footer.appendChild(footerLeft);
+
+            if (qrCodeSrc) {
+                const qrWrap = document.createElement('div');
+                qrWrap.className = 'share-card-qrcode-wrap';
+                const qrBox = document.createElement('div');
+                qrBox.className = 'share-card-qrcode-box';
+                const qrCanvas = document.createElement('canvas');
+                qrCanvas.id = 'share-card-qr-canvas';
+                qrCanvas.width = 152;
+                qrCanvas.height = 152;
+                qrCanvas.style.width = '76px';
+                qrCanvas.style.height = '76px';
+                qrCanvas.style.display = 'block';
+                qrBox.appendChild(qrCanvas);
+                qrWrap.appendChild(qrBox);
+                const qrLabel = document.createElement('span');
+                qrLabel.className = 'share-card-qrcode-label';
+                qrLabel.textContent = '微信扫码';
+                qrWrap.appendChild(qrLabel);
+                footer.appendChild(qrWrap);
+            }
+            card.appendChild(footer);
 
             // 在独立 canvas 绘制二维码
             if (qrCodeSrc) {
@@ -344,8 +407,14 @@
                 }
             }
 
-            // 等待正文内图片加载
+            // 提升懒加载地址后再等待正文内图片加载
             const images = card.querySelectorAll('.share-card-body img');
+            images.forEach(img => {
+                const realSrc = img.getAttribute('data-original') || img.getAttribute('data-actualsrc') || img.src;
+                if (realSrc && img.src !== realSrc) {
+                    img.src = realSrc;
+                }
+            });
             if (images.length > 0) {
                 await Promise.all(Array.from(images).map(img => {
                     if (img.complete) return Promise.resolve();
@@ -363,19 +432,19 @@
             const imgUrl = canvas.toDataURL('image/png');
             const downloadLink = document.createElement('a');
             downloadLink.href = imgUrl;
-            const safeTitle = title.replace(/[\\/:*?"<>|]/g, '').slice(0, 20);
-            downloadLink.download = `${safeTitle}_${author}.png`;
+            const unsafeNameChars = /[\\/:*?"<>|]/g;
+            const safeTitle = title.replace(unsafeNameChars, '').slice(0, 20);
+            const safeAuthor = author.replace(unsafeNameChars, '');
+            downloadLink.download = `${safeTitle}_${safeAuthor}.png`;
             downloadLink.click();
 
-            // 生成完成后关闭浮层
-            document.body.click();
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         } catch (err) {
             console.error('生成图片失败:', err);
             alert('生成图片失败，请查看控制台。');
         } finally {
-            // 解除锁定并恢复按钮状态
             isGenerating = false;
-            statusTarget.innerText = originalText;
+            writeStatusText(statusTarget, originalText);
             rowElement.classList.remove('share-card-btn-loading');
         }
     }
@@ -409,12 +478,19 @@
             if (!textParent) continue;
 
             let row = textParent;
-            while (row && row.parentElement && row.parentElement.children.length === 1) {
+            let climb = 0;
+            while (row && row.parentElement && row.parentElement.children.length === 1 && climb < 6) {
                 row = row.parentElement;
+                climb++;
             }
             if (!row || !row.parentElement) continue;
 
             const listContainer = row.parentElement;
+            if (
+                listContainer === document.body ||
+                listContainer === document.documentElement ||
+                listContainer.children.length <= 1
+            ) continue;
 
             if (listContainer.getAttribute('data-img-share-done') === 'true') continue;
             listContainer.setAttribute('data-img-share-done', 'true');
@@ -455,9 +531,15 @@
         }
     }
 
-    // 10. 监听 DOM 树变动
+    // 10. 监听 DOM 树变动（rAF 合并同帧多次 mutation）
+    let pendingInject = false;
     const observer = new MutationObserver(() => {
-        tryInjectMenu();
+        if (pendingInject) return;
+        pendingInject = true;
+        requestAnimationFrame(() => {
+            pendingInject = false;
+            tryInjectMenu();
+        });
     });
 
     observer.observe(document.body, {
