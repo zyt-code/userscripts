@@ -34,7 +34,7 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 匹配站点 | `https://www.zhihu.com/*` |
+| 匹配站点 | `https://www.zhihu.com/*`、`https://zhuanlan.zhihu.com/*` |
 | 依赖 | html2canvas 1.4.1（jsDelivr CDN `@require` 自动引入） |
 | 权限 | `GM_addStyle`（注入卡片离屏排版样式） |
 | 运行时机 | `document-idle` |
@@ -47,4 +47,4 @@
 
 - 知乎页面结构改版（类名变更）可能导致标题/作者/正文提取失败；
 - 正文中的外站图片若不支持跨域，可能渲染为空白；
-- 仅针对"回答"场景优化，专栏文章等场景为尽力兼容（回退取 `h1.Post-Title` 等）。
+- 回答页走原有 `.ContentItem` 解析；专栏页（`zhuanlan.zhihu.com`）仅在主页选择器全部未命中后回退到 `.Post-Main` / `.Post-RichText`。

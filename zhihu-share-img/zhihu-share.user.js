@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出包含作者头像、标题、正文、编辑时间及高清二维码的分享卡片（支持防重点击与 Loading）
 // @author       You
 // @match        https://www.zhihu.com/*
+// @match        https://zhuanlan.zhihu.com/*
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js
 // @downloadURL  https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js
@@ -18,6 +19,16 @@
 
     let currentActiveCard = null;
     let isGenerating = false; // 全局生成锁，防止并发触发下载
+
+    function isZhuanlanPage() {
+        return location.hostname === 'zhuanlan.zhihu.com';
+    }
+
+    function getZhuanlanArticleEl() {
+        return document.querySelector('.Post-Main') ||
+               document.querySelector('.Post-content') ||
+               document.querySelector('article');
+    }
 
     // 1. 卡片离屏渲染容器及排版样式
     GM_addStyle(`
@@ -301,8 +312,11 @@
             const authorAvatarBase64 = await imageToBase64(authorAvatarRaw);
             const timeText = getAnswerTime(itemElement);
 
-            const richTextEl = itemElement.querySelector('.RichText') ||
-                               itemElement.querySelector('.CopyrightRichText-richText');
+            let richTextEl = itemElement.querySelector('.RichText') ||
+                             itemElement.querySelector('.CopyrightRichText-richText');
+            if (!richTextEl && isZhuanlanPage()) {
+                richTextEl = itemElement.querySelector('.Post-RichText');
+            }
             if (!richTextEl) {
                 alert('未找到正文内容');
                 return;
@@ -453,7 +467,8 @@
     function trackActiveCard(e) {
         const trigger = e.target.closest('.ShareMenu, button[aria-label*="分享"], .ContentItem-actions');
         if (trigger) {
-            const card = trigger.closest('.ContentItem') || trigger.closest('.List-item') || trigger.closest('.Card');
+            const card = trigger.closest('.ContentItem') || trigger.closest('.List-item') || trigger.closest('.Card')
+                || (isZhuanlanPage() ? (trigger.closest('.Post-Main') || trigger.closest('.Post-content') || trigger.closest('article')) : null);
             if (card) {
                 currentActiveCard = card;
             }
@@ -524,7 +539,8 @@
                 if (isGenerating) return;
 
                 const qrCodeSrc = getShareQrCodeSrc(newRow);
-                generateCardImage(currentActiveCard, newRow, clonedTextNode || newRow, qrCodeSrc);
+                const itemElement = currentActiveCard || (isZhuanlanPage() ? getZhuanlanArticleEl() : null);
+                generateCardImage(itemElement, newRow, clonedTextNode || newRow, qrCodeSrc);
             });
 
             listContainer.insertBefore(newRow, row);
