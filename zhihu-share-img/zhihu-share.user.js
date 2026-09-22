@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.5
-// @description  在知乎“分享”弹窗中插入“生成图片”选项，导出包含作者头像、标题、正文、编辑时间及高清二维码的分享卡片（支持防重点击与 Loading）
+// @version      2.6
+// @description  在知乎“分享”弹窗中插入“生成图片”选项，导出分享卡片长图；并屏蔽划词后弹出的复制/喜欢/评论工具条
 // @author       You
 // @match        https://www.zhihu.com/*
 // @match        https://zhuanlan.zhihu.com/*
@@ -594,13 +594,63 @@
         }
     }
 
-    // 10. 监听 DOM 树变动（rAF 合并同帧多次 mutation）
+    // 10. 屏蔽划词后的复制/喜欢/评论/AI 解释工具条
+    // 知乎用哈希类名渲染这条 tip，按按钮文案识别，避免误伤「复制链接」分享菜单。
+    function looksLikeSelectionTip(el) {
+        if (!el || el.nodeType !== 1 || el === document.body || el === document.documentElement) return false;
+        if (el.id === 'zhihu-share-card-container' || el.closest('#zhihu-share-card-container')) return false;
+        const text = (el.innerText || '').replace(/\s+/g, '');
+        if (!text || text.length > 32) return false;
+        if (text.includes('复制链接') || text.includes('生成图片')) return false;
+        return text.includes('复制') && text.includes('喜欢') && text.includes('评论');
+    }
+
+    function suppressSelectionTip(node) {
+        let el = node;
+        for (let i = 0; i < 8 && el && el !== document.body; i++) {
+            if (looksLikeSelectionTip(el)) {
+                el.style.setProperty('display', 'none', 'important');
+                el.style.setProperty('pointer-events', 'none', 'important');
+                el.setAttribute('data-zhihu-selection-tip-blocked', 'true');
+                return;
+            }
+            el = el.parentElement;
+        }
+    }
+
+    document.addEventListener('mouseup', () => {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+        requestAnimationFrame(() => {
+            const current = window.getSelection();
+            if (!current || current.isCollapsed || !current.rangeCount) return;
+            const rect = current.getRangeAt(0).getBoundingClientRect();
+            if (!rect || (!rect.width && !rect.height)) return;
+            const midX = rect.left + rect.width / 2;
+            [rect.top - 28, rect.bottom + 28].forEach((y) => {
+                const hit = document.elementFromPoint(midX, y);
+                if (hit) suppressSelectionTip(hit);
+            });
+        });
+    }, true);
+
+    // 11. 监听 DOM 树变动（rAF 合并同帧多次 mutation）
     let pendingInject = false;
-    const observer = new MutationObserver(() => {
+    const pendingTipNodes = [];
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType === 1) pendingTipNodes.push(node);
+            }
+        }
         if (pendingInject) return;
         pendingInject = true;
         requestAnimationFrame(() => {
             pendingInject = false;
+            while (pendingTipNodes.length) {
+                const node = pendingTipNodes.pop();
+                if (node.isConnected) suppressSelectionTip(node);
+            }
             tryInjectMenu();
         });
     });
