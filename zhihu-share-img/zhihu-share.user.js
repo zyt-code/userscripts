@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出分享卡片长图；并屏蔽划词后弹出的复制/喜欢/评论工具条
 // @author       You
 // @match        https://www.zhihu.com/*
@@ -634,6 +634,13 @@
         });
     }, true);
 
+    function removeSidebar() {
+        document.querySelectorAll('[data-za-detail-view-path-module="RightSideBar"]')
+            .forEach(element => element.remove());
+    }
+
+    removeSidebar();
+
     // 11. 监听 DOM 树变动（rAF 合并同帧多次 mutation）
     let pendingInject = false;
     const pendingTipNodes = [];
@@ -651,6 +658,7 @@
                 const node = pendingTipNodes.pop();
                 if (node.isConnected) suppressSelectionTip(node);
             }
+            removeSidebar();
             tryInjectMenu();
         });
     });
