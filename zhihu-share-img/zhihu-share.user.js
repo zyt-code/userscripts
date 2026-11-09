@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.9
+// @version      2.10
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出分享卡片长图；并屏蔽划词后弹出的复制/喜欢/评论工具条
 // @author       You
 // @match        https://www.zhihu.com/*
@@ -33,6 +33,9 @@
 
     // 1. 卡片离屏渲染容器及排版样式
     GM_addStyle(`
+        .CornerAnimayedFlex--kanshanEntry {
+            display: none !important;
+        }
         .Topstory-container {
             width: calc(100% - 32px) !important;
             max-width: none !important;
