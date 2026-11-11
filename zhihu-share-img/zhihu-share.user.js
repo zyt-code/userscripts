@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.12
+// @version      2.13
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出分享卡片长图；并屏蔽划词后弹出的复制/喜欢/评论工具条
 // @author       You
 // @match        https://www.zhihu.com/*
@@ -43,19 +43,26 @@
         .CornerAnimayedFlex--kanshanEntry {
             display: none !important;
         }
+        .SearchMain + div {
+            display: none !important;
+        }
+        .Search-container,
         .Topstory-container {
             width: calc(100% - 32px) !important;
             max-width: none !important;
         }
+        .SearchMain,
         .Topstory-mainColumn {
             width: 100% !important;
             max-width: none !important;
             flex: 1 1 auto !important;
         }
+        .SearchMain .ContentItem,
         .Topstory-mainColumn .ContentItem {
             padding-left: max(20px, calc((100% - 960px) / 2)) !important;
             padding-right: max(20px, calc((100% - 960px) / 2)) !important;
         }
+        .SearchMain .RichContent-inner,
         .Topstory-mainColumn .RichContent-inner {
             max-width: 960px;
         }
