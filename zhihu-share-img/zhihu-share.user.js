@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.15
+// @version      2.16
 // @description  在知乎“分享”弹窗中插入“生成图片”选项，导出分享卡片长图；并屏蔽划词后弹出的复制/喜欢/评论工具条
 // @author       You
 // @match        https://www.zhihu.com/*
@@ -33,6 +33,19 @@
 
     // 1. 卡片离屏渲染容器及排版样式
     GM_addStyle(`
+        a.RichContent-EntityWord {
+            color: inherit !important;
+            text-decoration: none !important;
+            background: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+            cursor: text !important;
+        }
+        a.RichContent-EntityWord svg,
+        a.RichContent-EntityWord .ZDI {
+            display: none !important;
+        }
         .AppHeader {
             transition: transform 0.2s ease;
         }
@@ -119,14 +132,6 @@
         }
         .share-card-body p {
             margin-bottom: 14px;
-        }
-        #zhihu-share-card-container .highlight-wrap {
-            border-bottom: none !important;
-            padding-bottom: 0 !important;
-            background: none !important;
-        }
-        #zhihu-share-card-container .highlight-wrap.has-comments::after {
-            display: none !important;
         }
         .share-card-body img {
             max-width: 100%;
@@ -436,6 +441,11 @@
 
             const clonedContent = richTextEl.cloneNode(true);
             clonedContent.querySelectorAll('button, .ContentItem-expandButton, .ContentItem-rightButton').forEach(el => el.remove());
+            clonedContent.querySelectorAll('.highlight-wrap').forEach(el => el.replaceWith(...el.childNodes));
+            clonedContent.querySelectorAll('a.RichContent-EntityWord').forEach(el => {
+                el.querySelectorAll('svg, .ZDI').forEach(icon => icon.remove());
+                el.replaceWith(...el.childNodes);
+            });
 
             let card = document.getElementById('zhihu-share-card-container');
             if (!card) {
