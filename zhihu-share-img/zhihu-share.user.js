@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         知乎回答生成分享长图
 // @namespace    https://tampermonkey.net/
-// @version      2.17
-// @description  在知乎“分享”弹窗中插入“生成图片”选项，导出分享卡片长图；并屏蔽划词后弹出的复制/喜欢/评论工具条
+// @version      2.18
+// @description  在知乎“分享”弹窗中插入“生成图片”选项，生成分享卡片长图并复制到剪贴板；并屏蔽划词后弹出的复制/喜欢/评论工具条
 // @author       You
 // @match        https://www.zhihu.com/*
 // @match        https://zhuanlan.zhihu.com/*
@@ -19,7 +19,7 @@
     'use strict';
 
     let currentActiveCard = null;
-    let isGenerating = false; // 全局生成锁，防止并发触发下载
+    let isGenerating = false; // 全局生成锁，防止并发生成图片
 
     function isZhuanlanPage() {
         return location.hostname === 'zhuanlan.zhihu.com';
@@ -389,7 +389,7 @@
         return generateQrDataUrl(getSharePageUrl());
     }
 
-    // 7. 生成并导出长图（带状态锁定）
+    // 7. 生成并复制长图（带状态锁定）
     function readStatusText(target) {
         if (!target) return '';
         return target.nodeType === Node.TEXT_NODE ? target.nodeValue : target.innerText;
@@ -408,18 +408,35 @@
         if (isGenerating) return;
 
         let originalText = '';
+        let rejectImage;
         try {
             isGenerating = true;
             originalText = readStatusText(statusTarget);
             writeStatusText(statusTarget, '正在生成...');
             rowElement.classList.add('share-card-btn-loading');
 
-            const qrCodeSrc = await resolveQrImage(rowElement);
-
             if (!itemElement) {
                 alert('未能捕获到对应回答卡片，请将鼠标移至该回答后重试');
                 return;
             }
+
+            if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined') {
+                throw new Error('当前浏览器不支持复制图片，请使用新版 Chrome、Edge 或 Safari。');
+            }
+
+            let resolveImage;
+            const imageBlob = new Promise((resolve, reject) => {
+                resolveImage = resolve;
+                rejectImage = reject;
+            });
+            // 提前注册失败处理，避免渲染失败或权限被拒时出现未处理的 rejection。
+            imageBlob.catch(() => {});
+            // 在点击事件内发起写入，PNG 延迟生成，保留浏览器要求的用户手势。
+            const copyResult = navigator.clipboard.write([
+                new ClipboardItem({ 'image/png': imageBlob })
+            ]).then(() => null, error => error);
+
+            const qrCodeSrc = await resolveQrImage(rowElement);
 
             // 折叠状态自动展开，轮询直到展开按钮消失
             const expandBtn = itemElement.querySelector('.ContentItem-expandButton');
@@ -554,19 +571,26 @@
                 logging: false
             });
 
-            const imgUrl = canvas.toDataURL('image/png');
-            const downloadLink = document.createElement('a');
-            downloadLink.href = imgUrl;
-            const unsafeNameChars = /[\\/:*?"<>|]/g;
-            const safeTitle = title.replace(unsafeNameChars, '').slice(0, 20);
-            const safeAuthor = author.replace(unsafeNameChars, '');
-            downloadLink.download = `${safeTitle}_${safeAuthor}.png`;
-            downloadLink.click();
+            const blob = await new Promise((resolve, reject) => {
+                canvas.toBlob(result => {
+                    if (result) resolve(result);
+                    else reject(new Error('无法生成 PNG 图片，请重试。'));
+                }, 'image/png');
+            });
+            resolveImage(blob);
+            const copyError = await copyResult;
+            if (copyError) throw copyError;
+
+            writeStatusText(statusTarget, '已复制，可直接粘贴');
+            await new Promise(resolve => setTimeout(resolve, 1200));
 
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         } catch (err) {
-            console.error('生成图片失败:', err);
-            alert('生成图片失败，请查看控制台。');
+            if (rejectImage) rejectImage(err);
+            console.error('生成或复制图片失败:', err);
+            alert('生成或复制图片失败：' + (err.name === 'NotAllowedError'
+                ? '请允许本站写入剪贴板，并保持页面处于前台后重试。'
+                : (err.message || '请查看控制台。')));
         } finally {
             isGenerating = false;
             writeStatusText(statusTarget, originalText);

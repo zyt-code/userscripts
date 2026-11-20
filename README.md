@@ -6,7 +6,7 @@
 
 | 目录 | 脚本 | 说明 | 安装链接 |
 | --- | --- | --- | --- |
-| [zhihu-share-img](./zhihu-share-img) | 知乎回答生成分享长图 | 在知乎"分享"弹窗中注入"生成图片"选项，一键导出含头像、正文、二维码的分享卡片长图 | [![一键安装](https://img.shields.io/badge/%E4%B8%80%E9%94%AE%E5%AE%89%E8%A3%85-Tampermonkey-00485B?logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js) |
+| [zhihu-share-img](./zhihu-share-img) | 知乎回答生成分享长图 | 在知乎"分享"弹窗中注入"生成图片"选项，一键生成含头像、正文、二维码的分享卡片长图并复制到剪贴板 | [![一键安装](https://img.shields.io/badge/%E4%B8%80%E9%94%AE%E5%AE%89%E8%A3%85-Tampermonkey-00485B?logo=tampermonkey&logoColor=white)](https://raw.githubusercontent.com/zyt-code/userscripts/main/zhihu-share-img/zhihu-share.user.js) |
 
 ## 安装方式
 
